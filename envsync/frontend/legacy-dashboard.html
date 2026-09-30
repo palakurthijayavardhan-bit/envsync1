@@ -1,0 +1,46 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EnvSync</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--tx:#e6edf3;--mu:#8b949e;--ok:#3fb950;--wa:#d29922;--er:#f85149}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:14px 20px;border-bottom:1px solid var(--bd)}
+h1{font-size:18px;margin:0;flex:1}h1 span{color:var(--ok)}nav{display:flex;gap:4px;padding:8px 20px;flex-wrap:wrap;border-bottom:1px solid var(--bd)}
+nav a{padding:6px 12px;border-radius:6px;color:var(--mu);cursor:pointer}nav a.on{background:var(--card);color:var(--tx)}
+main{padding:20px;max-width:1100px;margin:auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.card,.panel{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px}.card b{display:block;font-size:26px;margin-top:4px}
+button{background:#238636;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;font-weight:600}button.s{background:#30363d}button.d{background:#b62324}
+.wrap{overflow-x:auto}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px 10px;border-bottom:1px solid var(--bd);white-space:nowrap}th{color:var(--mu)}
+.b{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}.valid,.Valid{background:#23863633;color:var(--ok)}.warning,.Warning{background:#d2992233;color:var(--wa)}.error,.Error,.Missing{background:#f8514933;color:var(--er)}
+pre{background:#010409;padding:12px;border-radius:6px;overflow:auto;white-space:pre-wrap}.iss{padding:8px 0;border-bottom:1px solid var(--bd)}section{display:none}section.on{display:block}h2{font-size:15px}
+</style></head><body>
+<header><h1>Env<span>Sync</span> <small style="color:var(--mu);font-weight:400">config validator</small></h1>
+<button class="s" onclick="gen()">Generate .env.example</button><button onclick="run()">▶ Run Validation</button></header>
+<nav id="nav"></nav><main>
+<section id="dashboard"></section><section id="comparison"></section><section id="schema"></section><section id="report"></section><section id="security"></section>
+<section id="settings"><div class="panel"><h2>Settings</h2><p>Server binds to 127.0.0.1 only. Secret values are never sent to the browser; only presence + SHA-256 fingerprint prefix.</p><p>Use <code>POST /api/*</code> with your own <code>{envs, schema}</code> to validate other data.</p></div></section>
+<div class="panel" id="out" style="display:none;margin-top:16px"></div></main>
+<script>
+const $=s=>document.getElementById(s),E=s=>String(s).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';');
+const api=(p,b)=>fetch('/api/'+p,b?{method:'POST',headers:{'content-type':'application/json'},body:'{}'}:{}).then(r=>r.json());
+const badge=s=>`<span class="b ${s}">${E(s)}</span>`,tabs=['dashboard','comparison','schema','report','security','settings'];
+$('nav').innerHTML=tabs.map(t=>`<a id="t-${t}" onclick="show('${t}')">${t[0].toUpperCase()+t.slice(1)}</a>`).join('');
+function show(t){tabs.forEach(x=>{$(x).classList.toggle('on',x==t);$('t-'+x).classList.toggle('on',x==t)})}
+const table=(h,rows)=>`<div class="wrap"><table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</table></div>`;
+async function run(){
+ const [v,c,env,rep]=await Promise.all([api('validate',1),api('compare',1),api('environments'),api('report')]);
+ const s=v.stats,st=v.envStatus;
+ $('dashboard').innerHTML=`<div class="grid">${['local','staging','production'].map(e=>`<div class="card">${e}<b>${badge(st[e].status)}</b><small>${st[e].critical} critical · ${st[e].warnings} warnings</small></div>`).join('')}</div>
+ <div class="grid">${[['Total variables',s.total],['Missing',s.missing],['Invalid',s.invalid],['Security warnings',s.securityWarnings],['Health',v.health+'%']].map(([a,b])=>`<div class="card">${a}<b>${b}</b></div>`).join('')}</div>
+ <div class="panel"><h2>Issues</h2>${v.issues.map(i=>`<div class="iss">${i.severity=='critical'?'❌':'⚠'} <b>${E(i.key)}</b> — ${E(i.message)} ${badge(i.severity=='critical'?'Error':'Warning')}</div>`).join('')||'✓ No issues'}</div>
+ <p><button class="d" onclick="push()">Simulate git push</button></p>`;
+ $('comparison').innerHTML=`<div class="panel"><h2>Environment comparison</h2>${table(['Variable','Local','Staging','Production','Status'],c.rows.map(r=>[`<b>${E(r.key)}</b>`,...['local','staging','production'].map(e=>r.values[e]=='Missing'?badge('Missing'):E(r.values[e])),badge(r.status)]))}</div>`;
+ $('schema').innerHTML=`<div class="panel"><h2>Configuration schema</h2>${table(['Variable','Required','Type','Secret'],Object.entries(env.schema).map(([k,d])=>[E(k),d.required,E(d.type),d.secret]))}</div>`;
+ $('report').innerHTML=`<div class="panel"><h2>Validation report</h2><pre>${E(rep.text)}</pre></div>`;
+ const sec=env.environments;
+ $('security').innerHTML=`<div class="panel"><h2>Secrets (values hidden)</h2>${table(['Variable','Local','Staging','Production'],Object.keys(env.schema).filter(k=>env.schema[k].secret).map(k=>[E(k),...['local','staging','production'].map(e=>{const x=sec[e][k];return x&&x.present?`🔒 present · fp:${x.fingerprint}`:badge('Missing')})]))}<p style="color:var(--mu)">Matching fingerprints across environments signal reused secrets without revealing them.</p></div>`;
+ show('dashboard');
+}
+async function gen(){const r=await api('generate-env-example',1);out('.env.example',r.content)}
+async function push(){const r=await api('prepush',1);out('EnvSync Validation',r.blocked?r.reasons.map(x=>'❌ '+x).join('\n')+'\n\nPush blocked.':'✓ Push allowed')}
+function out(t,c){const o=$('out');o.style.display='block';o.innerHTML=`<h2>${E(t)}</h2><pre>${E(c)}</pre>`}
+run();
+</script></body></html>
